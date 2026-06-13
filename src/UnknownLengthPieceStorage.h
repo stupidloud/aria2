@@ -216,6 +216,8 @@ public:
 
   virtual WrDiskCache* getWrDiskCache() CXX11_OVERRIDE { return nullptr; }
 
+  virtual std::string getWholeFileChecksum() CXX11_OVERRIDE { return ""; }
+
   virtual void flushWrDiskCacheEntry(bool releaseEntries) CXX11_OVERRIDE {}
 
   virtual int32_t getPieceLength(size_t index) CXX11_OVERRIDE;

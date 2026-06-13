@@ -52,6 +52,7 @@ class FileEntry;
 class PieceStatMan;
 class PieceSelector;
 class StreamPieceSelector;
+class MessageDigest;
 
 #define END_GAME_PIECE_NUM 20
 
@@ -95,6 +96,27 @@ private:
   std::unique_ptr<StreamPieceSelector> streamPieceSelector_;
 
   WrDiskCache* wrDiskCache_;
+
+  // Whole-file checksum computed incrementally as consecutive pieces
+  // complete during the download. Only used when the download carries a
+  // whole-file digest (DownloadContext::getHashType()) and starts from
+  // an empty file; resumed downloads disable it and fall back to
+  // reading the whole file back at validation time.
+  std::unique_ptr<MessageDigest> wholeFileChecksum_;
+  // Global byte offset up to which the consecutive completed prefix has
+  // been fed into wholeFileChecksum_.
+  int64_t wholeFileChecksumOffset_;
+  // Finalized raw digest, set once the whole file has been hashed.
+  std::string wholeFileChecksumResult_;
+  bool wholeFileChecksumEnabled_;
+
+  // Feeds any newly-contiguous completed pieces (starting at
+  // wholeFileChecksumOffset_) into wholeFileChecksum_. completedPiece is
+  // the piece that just completed; its still-cached data is hashed
+  // through the write disk cache, the rest is read from disk.
+  void updateWholeFileChecksum(const std::shared_ptr<Piece>& completedPiece);
+  // Disables incremental whole-file checksumming (e.g. on resume).
+  void disableWholeFileChecksum();
 #ifdef ENABLE_BITTORRENT
   void getMissingPiece(std::vector<std::shared_ptr<Piece>>& pieces,
                        size_t minMissingBlocks, const unsigned char* bitfield,
@@ -233,6 +255,8 @@ public:
   virtual std::shared_ptr<DiskAdaptor> getDiskAdaptor() CXX11_OVERRIDE;
 
   virtual WrDiskCache* getWrDiskCache() CXX11_OVERRIDE;
+
+  virtual std::string getWholeFileChecksum() CXX11_OVERRIDE;
 
   virtual void flushWrDiskCacheEntry(bool releaseEntries) CXX11_OVERRIDE;
 

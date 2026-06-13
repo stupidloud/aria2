@@ -61,6 +61,15 @@ IteratableChecksumValidator::~IteratableChecksumValidator() = default;
 
 void IteratableChecksumValidator::validateChunk()
 {
+  // If the whole-file checksum was already computed incrementally while
+  // the file was being downloaded, there is no need to read the file
+  // back from disk.
+  std::string precomputed = pieceStorage_->getWholeFileChecksum();
+  if (!precomputed.empty()) {
+    currentOffset_ = dctx_->getTotalLength();
+    finishValidation(precomputed);
+    return;
+  }
   // Don't guard with !finished() to allow zero-length file to be
   // verified.
   std::array<unsigned char, 4_k> buf;
@@ -69,19 +78,24 @@ void IteratableChecksumValidator::validateChunk()
   ctx_->update(buf.data(), length);
   currentOffset_ += length;
   if (finished()) {
-    std::string actualDigest = ctx_->digest();
-    if (dctx_->getDigest() == actualDigest) {
-      pieceStorage_->markAllPiecesDone();
-      dctx_->setChecksumVerified(true);
-    }
-    else {
-      A2_LOG_INFO(fmt("Checksum validation failed. expected=%s, actual=%s",
-                      util::toHex(dctx_->getDigest()).c_str(),
-                      util::toHex(actualDigest).c_str()));
-      BitfieldMan bitfield(dctx_->getPieceLength(), dctx_->getTotalLength());
-      pieceStorage_->setBitfield(bitfield.getBitfield(),
-                                 bitfield.getBitfieldLength());
-    }
+    finishValidation(ctx_->digest());
+  }
+}
+
+void IteratableChecksumValidator::finishValidation(
+    const std::string& actualDigest)
+{
+  if (dctx_->getDigest() == actualDigest) {
+    pieceStorage_->markAllPiecesDone();
+    dctx_->setChecksumVerified(true);
+  }
+  else {
+    A2_LOG_INFO(fmt("Checksum validation failed. expected=%s, actual=%s",
+                    util::toHex(dctx_->getDigest()).c_str(),
+                    util::toHex(actualDigest).c_str()));
+    BitfieldMan bitfield(dctx_->getPieceLength(), dctx_->getTotalLength());
+    pieceStorage_->setBitfield(bitfield.getBitfield(),
+                               bitfield.getBitfieldLength());
   }
 }
 

@@ -162,6 +162,14 @@ public:
   // cached data and data on disk.
   std::string getDigestWithWrCache(size_t pieceLength,
                                    const std::shared_ptr<DiskAdaptor>& adaptor);
+
+  // Feeds the whole content of this piece into mdctx, consulting the
+  // write disk cache for not-yet-flushed data and reading the rest
+  // from adaptor. Unlike getDigestWithWrCache(), the digest is not
+  // finalized, so the caller can keep feeding subsequent pieces into
+  // the same mdctx (e.g. to compute a whole-file checksum).
+  void updateHashWithWrCache(MessageDigest* mdctx, size_t pieceLength,
+                             const std::shared_ptr<DiskAdaptor>& adaptor) const;
   /**
    * Loses current bitfield state.
    */

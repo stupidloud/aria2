@@ -55,6 +55,10 @@ private:
 
   std::unique_ptr<MessageDigest> ctx_;
 
+  // Compares actualDigest against the expected whole-file digest and
+  // marks the download verified or resets the bitfield accordingly.
+  void finishValidation(const std::string& actualDigest);
+
 public:
   IteratableChecksumValidator(
       const std::shared_ptr<DownloadContext>& dctx,

@@ -226,6 +226,13 @@ public:
 
   virtual WrDiskCache* getWrDiskCache() = 0;
 
+  // If a whole-file checksum was computed incrementally while
+  // consecutive pieces completed during the download and the whole
+  // file has been hashed, returns its raw (non-hex) digest. Otherwise
+  // returns an empty string, and the caller is expected to compute the
+  // checksum itself (e.g. by reading the file back from disk).
+  virtual std::string getWholeFileChecksum() = 0;
+
   // Flushes write disk cache for in-flight piece
   // and optionally releases the associated cache entries.
   virtual void flushWrDiskCacheEntry(bool releaseEntries) = 0;

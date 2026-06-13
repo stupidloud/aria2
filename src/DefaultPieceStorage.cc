@@ -36,6 +36,7 @@
 
 #include <numeric>
 #include <algorithm>
+#include <array>
 
 #include "DownloadContext.h"
 #include "Piece.h"
@@ -69,6 +70,8 @@
 #include "WrDiskCache.h"
 #include "RequestGroup.h"
 #include "SimpleRandomizer.h"
+#include "MessageDigest.h"
+#include "DiskAdaptor.h"
 #ifdef ENABLE_BITTORRENT
 #  include "bittorrent_helper.h"
 #endif // ENABLE_BITTORRENT
@@ -92,7 +95,9 @@ DefaultPieceStorage::DefaultPieceStorage(
       pieceStatMan_(std::make_shared<PieceStatMan>(
           downloadContext->getNumPieces(), true)),
       pieceSelector_(make_unique<RarestPieceSelector>(pieceStatMan_)),
-      wrDiskCache_(nullptr)
+      wrDiskCache_(nullptr),
+      wholeFileChecksumOffset_(0),
+      wholeFileChecksumEnabled_(false)
 {
   const std::string& pieceSelectorOpt =
       option_->get(PREF_STREAM_PIECE_SELECTOR);
@@ -471,6 +476,7 @@ void DefaultPieceStorage::completePiece(const std::shared_ptr<Piece>& piece)
   bitfieldMan_->setBit(piece->getIndex());
   bitfieldMan_->unsetUseBit(piece->getIndex());
   addPieceStats(piece->getIndex());
+  updateWholeFileChecksum(piece);
   if (downloadFinished()) {
     downloadContext_->resetDownloadStopTime();
     if (isSelectiveDownloadingMode()) {
@@ -508,6 +514,78 @@ void DefaultPieceStorage::completePiece(const std::shared_ptr<Piece>& piece)
     }
 #endif // ENABLE_BITTORRENT
   }
+}
+
+void DefaultPieceStorage::updateWholeFileChecksum(
+    const std::shared_ptr<Piece>& completedPiece)
+{
+  if (!wholeFileChecksumEnabled_ || !wholeFileChecksum_) {
+    return;
+  }
+  const int64_t totalLength = downloadContext_->getTotalLength();
+  const int32_t pieceLength = downloadContext_->getPieceLength();
+  try {
+    // Feed every piece that is now part of the contiguous completed
+    // prefix into the running digest.
+    while (pieceLength > 0 && wholeFileChecksumOffset_ < totalLength) {
+      size_t index = wholeFileChecksumOffset_ / pieceLength;
+      if (!bitfieldMan_->isBitSet(index)) {
+        break;
+      }
+      // wholeFileChecksumOffset_ is always at a piece boundary here,
+      // because pieces are fed in full.
+      int64_t pieceEnd =
+          std::min(static_cast<int64_t>(index + 1) * pieceLength, totalLength);
+      if (completedPiece && completedPiece->getIndex() == index) {
+        // The just-completed piece may still hold not-yet-flushed data
+        // in the write disk cache, so hash it cache-aware.
+        completedPiece->updateHashWithWrCache(wholeFileChecksum_.get(),
+                                              pieceLength, diskAdaptor_);
+      }
+      else {
+        // Pieces that completed earlier were already flushed to disk by
+        // the time their successor completes; read them back from disk.
+        std::array<unsigned char, 4_k> buf;
+        int64_t off = wholeFileChecksumOffset_;
+        while (off < pieceEnd) {
+          size_t len =
+              std::min(static_cast<int64_t>(buf.size()), pieceEnd - off);
+          ssize_t r = diskAdaptor_->readData(buf.data(), len, off);
+          if (r <= 0) {
+            throw DL_ABORT_EX(fmt(EX_FILE_READ,
+                                  downloadContext_->getBasePath().c_str(),
+                                  "data is too short"));
+          }
+          wholeFileChecksum_->update(buf.data(), r);
+          off += r;
+        }
+      }
+      wholeFileChecksumOffset_ = pieceEnd;
+    }
+    if (wholeFileChecksumOffset_ >= totalLength) {
+      // Whole file hashed; finalize the digest for later retrieval.
+      wholeFileChecksumResult_ = wholeFileChecksum_->digest();
+      wholeFileChecksum_.reset();
+    }
+  }
+  catch (RecoverableException& e) {
+    A2_LOG_DEBUG_EX("Failed to compute whole-file checksum incrementally;"
+                    " falling back to full validation.",
+                    e);
+    disableWholeFileChecksum();
+  }
+}
+
+void DefaultPieceStorage::disableWholeFileChecksum()
+{
+  wholeFileChecksumEnabled_ = false;
+  wholeFileChecksum_.reset();
+  wholeFileChecksumResult_.clear();
+}
+
+std::string DefaultPieceStorage::getWholeFileChecksum()
+{
+  return wholeFileChecksumResult_;
 }
 
 bool DefaultPieceStorage::isSelectiveDownloadingMode()
@@ -659,6 +737,19 @@ void DefaultPieceStorage::initStorage()
   else if (option_->get(PREF_FILE_ALLOCATION) == V_TRUNC) {
     diskAdaptor_->setFileAllocationMethod(DiskAdaptor::FILE_ALLOC_TRUNC);
   }
+  // Compute the whole-file checksum incrementally while the download
+  // proceeds, so the post-download validation doesn't need to read the
+  // whole file back. This is only possible when a whole-file digest is
+  // known up front. Resuming a partially downloaded file disables it
+  // (see disableWholeFileChecksum()), because the already-present prefix
+  // would have to be hashed in one blocking pass.
+  const std::string& hashType = downloadContext_->getHashType();
+  if (!hashType.empty() && MessageDigest::supports(hashType)) {
+    wholeFileChecksum_ = MessageDigest::create(hashType);
+    wholeFileChecksumOffset_ = 0;
+    wholeFileChecksumResult_.clear();
+    wholeFileChecksumEnabled_ = true;
+  }
 }
 
 void DefaultPieceStorage::setBitfield(const unsigned char* bitfield,
@@ -666,6 +757,12 @@ void DefaultPieceStorage::setBitfield(const unsigned char* bitfield,
 {
   bitfieldMan_->setBitfield(bitfield, bitfieldLength);
   addPieceStats(bitfield, bitfieldLength);
+  // Pieces marked complete here were downloaded in a previous session
+  // and were never fed into the running digest, so the incremental
+  // whole-file checksum can no longer be trusted.
+  if (bitfieldMan_->getCompletedLength() > 0) {
+    disableWholeFileChecksum();
+  }
 }
 
 size_t DefaultPieceStorage::getBitfieldLength()
@@ -749,10 +846,19 @@ void DefaultPieceStorage::removeAdvertisedPiece(const Timer& expiry)
   haves_.erase(std::begin(haves_), it);
 }
 
-void DefaultPieceStorage::markAllPiecesDone() { bitfieldMan_->setAllBit(); }
+void DefaultPieceStorage::markAllPiecesDone()
+{
+  bitfieldMan_->setAllBit();
+  disableWholeFileChecksum();
+}
 
 void DefaultPieceStorage::markPiecesDone(int64_t length)
 {
+  if (length > 0) {
+    // Pieces marked complete without being fed into the running digest
+    // (e.g. on resume) invalidate the incremental whole-file checksum.
+    disableWholeFileChecksum();
+  }
   if (length == bitfieldMan_->getTotalLength()) {
     bitfieldMan_->setAllBit();
   }
@@ -791,6 +897,14 @@ void DefaultPieceStorage::addInFlightPiece(
     const std::vector<std::shared_ptr<Piece>>& pieces)
 {
   usedPieces_.insert(pieces.begin(), pieces.end());
+  // Partially completed pieces restored from a previous session carry
+  // data that was never fed into the running digest.
+  for (auto& piece : pieces) {
+    if (piece->getCompletedLength() > 0) {
+      disableWholeFileChecksum();
+      break;
+    }
+  }
 }
 
 size_t DefaultPieceStorage::countInFlightPiece() { return usedPieces_.size(); }

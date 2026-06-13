@@ -186,7 +186,15 @@ jobs:
         # parse), aborting the build. WebSocket RPC is therefore not
         # available in this MSYS2 variant; HTTP JSON-RPC still is, and
         # the mingw cross build (Plan A) provides a full-featured exe.
+        # --build/--host must be the mingw triple (not the autodetected
+        # x86_64-pc-msys) so configure.ac's `case $host in *mingw*)`
+        # branch runs and defines HAVE_WINSOCK2_H / HAVE_WS2TCPIP_H /
+        # HAVE_WINIOCTL_H. Without it the Windows socket and winioctl
+        # headers are never included and the build fails with
+        # "'sockaddr'/'WSABUF'/'FSCTL_SET_SPARSE' does not name a type".
+        # Setting build==host keeps it a native (non-cross) build.
         ./configure \
+          --build=x86_64-w64-mingw32 --host=x86_64-w64-mingw32 \
           --without-included-gettext --disable-nls \
           --disable-websocket \
           --with-libcares --with-sqlite3 --with-libexpat \

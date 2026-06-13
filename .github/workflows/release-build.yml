@@ -179,8 +179,16 @@ jobs:
     - name: Build aria2 (static single-file)
       run: |
         autoreconf -i
+        # NOTE: --disable-websocket avoids building the bundled
+        # deps/wslay sub-project. Its configure is generated on the
+        # fly by autoreconf and, under the MSYS2/UCRT64 shell, comes
+        # out with a syntax error (an AC_CHECK_HEADERS loop fails to
+        # parse), aborting the build. WebSocket RPC is therefore not
+        # available in this MSYS2 variant; HTTP JSON-RPC still is, and
+        # the mingw cross build (Plan A) provides a full-featured exe.
         ./configure \
           --without-included-gettext --disable-nls \
+          --disable-websocket \
           --with-libcares --with-sqlite3 --with-libexpat \
           --with-libz --with-libgmp --with-libssh2 \
           --with-wintls \

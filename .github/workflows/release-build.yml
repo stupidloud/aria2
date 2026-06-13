@@ -195,21 +195,16 @@ jobs:
         # Setting build==host keeps it a native (non-cross) build.
         # The Windows-header AC_CHECK_HEADERS batch (windows.h/winsock2.h/
         # ws2tcpip.h/winioctl.h/...) misdetects as "no" under MSYS2/UCRT64
-        # (even io.h and share.h fail) because the autoconf compile test's
-        # prologue pulls in windows.h before winsock2.h, cascading every
-        # header in the batch to "no". The headers do exist in UCRT64 and
-        # the source's include order is correct (Plan A proves it), so we
-        # force the cache variables to yes to get HAVE_WINSOCK2_H etc.
+        # because the autoconf compile test's prologue pulls in windows.h
+        # before winsock2.h, cascading the whole batch to "no". Forcing
+        # the ac_cv_header_* cache vars only fixes the first header
+        # (windows.h); the continuation entries hash to different cache
+        # names. The headers do exist in UCRT64 and the source's include
+        # order is correct (Plan A proves it), so define the HAVE_* macros
+        # directly via CPPFLAGS to bypass detection entirely.
         ./configure \
           --build=x86_64-w64-mingw32 --host=x86_64-w64-mingw32 \
-          ac_cv_header_windows_h=yes \
-          ac_cv_header_winsock2_h=yes \
-          ac_cv_header_ws2tcpip_h=yes \
-          ac_cv_header_mmsystem_h=yes \
-          ac_cv_header_io_h=yes \
-          ac_cv_header_iphlpapi_h=yes \
-          ac_cv_header_winioctl_h=yes \
-          ac_cv_header_share_h=yes \
+          CPPFLAGS="-DHAVE_WINDOWS_H=1 -DHAVE_WINSOCK2_H=1 -DHAVE_WS2TCPIP_H=1 -DHAVE_MMSYSTEM_H=1 -DHAVE_IO_H=1 -DHAVE_IPHLPAPI_H=1 -DHAVE_WINIOCTL_H=1 -DHAVE_SHARE_H=1" \
           --without-included-gettext --disable-nls \
           --disable-websocket \
           --with-libcares --with-sqlite3 --with-libexpat \

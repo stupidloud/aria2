@@ -193,8 +193,23 @@ jobs:
         # headers are never included and the build fails with
         # "'sockaddr'/'WSABUF'/'FSCTL_SET_SPARSE' does not name a type".
         # Setting build==host keeps it a native (non-cross) build.
+        # The Windows-header AC_CHECK_HEADERS batch (windows.h/winsock2.h/
+        # ws2tcpip.h/winioctl.h/...) misdetects as "no" under MSYS2/UCRT64
+        # (even io.h and share.h fail) because the autoconf compile test's
+        # prologue pulls in windows.h before winsock2.h, cascading every
+        # header in the batch to "no". The headers do exist in UCRT64 and
+        # the source's include order is correct (Plan A proves it), so we
+        # force the cache variables to yes to get HAVE_WINSOCK2_H etc.
         ./configure \
           --build=x86_64-w64-mingw32 --host=x86_64-w64-mingw32 \
+          ac_cv_header_windows_h=yes \
+          ac_cv_header_winsock2_h=yes \
+          ac_cv_header_ws2tcpip_h=yes \
+          ac_cv_header_mmsystem_h=yes \
+          ac_cv_header_io_h=yes \
+          ac_cv_header_iphlpapi_h=yes \
+          ac_cv_header_winioctl_h=yes \
+          ac_cv_header_share_h=yes \
           --without-included-gettext --disable-nls \
           --disable-websocket \
           --with-libcares --with-sqlite3 --with-libexpat \

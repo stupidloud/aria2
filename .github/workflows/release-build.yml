@@ -2,7 +2,8 @@ name: release-build
 
 # Manually-triggered build that produces downloadable artifacts:
 #   * a stripped native Linux x86_64 aria2c binary
-#   * a source distribution tarball (make dist)
+#   * a fully-static musl Linux binary (uploaded to temp.sh)
+#   * single-file static Windows aria2c.exe (mingw cross + MSYS2)
 # Run it from the Actions tab ("Run workflow") or with:
 #   gh workflow run release-build.yml --ref <branch> --repo <owner>/aria2
 
@@ -128,31 +129,6 @@ jobs:
       with:
         name: aria2c-linux-x86_64-static
         path: aria2c-linux-x86_64-static
-        if-no-files-found: error
-
-  source-dist:
-    runs-on: ubuntu-22.04
-    steps:
-    - uses: actions/checkout@v6
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          g++ autoconf automake autotools-dev autopoint libtool \
-          pkg-config gettext \
-          libgnutls28-dev libc-ares-dev zlib1g-dev \
-          libsqlite3-dev libssh2-1-dev libcppunit-dev
-    - name: Bootstrap
-      run: autoreconf -i
-    - name: Configure
-      run: ./configure --with-gnutls --without-openssl
-    - name: make dist
-      run: make dist
-    - name: Upload source tarball
-      uses: actions/upload-artifact@v4
-      with:
-        name: aria2-source-dist
-        path: aria2-*.tar.*
         if-no-files-found: error
 
   # Plan A: official-style mingw-w64 cross build on Linux. Dependencies

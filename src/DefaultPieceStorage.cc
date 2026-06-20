@@ -566,18 +566,25 @@ void DefaultPieceStorage::updateWholeFileChecksum(
       // Whole file hashed; finalize the digest for later retrieval.
       wholeFileChecksumResult_ = wholeFileChecksum_->digest();
       wholeFileChecksum_.reset();
+      A2_LOG_INFO(fmt("Whole-file checksum computed incrementally during"
+                      " download: %s",
+                      util::toHex(wholeFileChecksumResult_).c_str()));
     }
   }
   catch (RecoverableException& e) {
-    A2_LOG_DEBUG_EX("Failed to compute whole-file checksum incrementally;"
-                    " falling back to full validation.",
-                    e);
+    A2_LOG_INFO_EX("Failed to compute whole-file checksum incrementally;"
+                   " falling back to reading the file back for validation.",
+                   e);
     disableWholeFileChecksum();
   }
 }
 
 void DefaultPieceStorage::disableWholeFileChecksum()
 {
+  if (wholeFileChecksumEnabled_) {
+    A2_LOG_INFO("Incremental whole-file checksum disabled; the download will be"
+                " validated by reading the file back from disk.");
+  }
   wholeFileChecksumEnabled_ = false;
   wholeFileChecksum_.reset();
   wholeFileChecksumResult_.clear();
@@ -749,6 +756,15 @@ void DefaultPieceStorage::initStorage()
     wholeFileChecksumOffset_ = 0;
     wholeFileChecksumResult_.clear();
     wholeFileChecksumEnabled_ = true;
+    A2_LOG_INFO(fmt("Incremental whole-file checksum enabled (hashType=%s);"
+                    " the digest is computed during download to avoid a"
+                    " post-download re-read of the file.",
+                    hashType.c_str()));
+  }
+  else {
+    A2_LOG_DEBUG(fmt("Incremental whole-file checksum not enabled"
+                     " (hashType=%s).",
+                     hashType.empty() ? "none" : hashType.c_str()));
   }
 }
 

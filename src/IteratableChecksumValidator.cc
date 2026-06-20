@@ -66,6 +66,8 @@ void IteratableChecksumValidator::validateChunk()
   // back from disk.
   std::string precomputed = pieceStorage_->getWholeFileChecksum();
   if (!precomputed.empty()) {
+    A2_LOG_NOTICE("Validating file integrity using the checksum computed"
+                  " incrementally during download (skipping the file re-read).");
     currentOffset_ = dctx_->getTotalLength();
     finishValidation(precomputed);
     return;

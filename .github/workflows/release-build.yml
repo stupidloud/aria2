@@ -43,6 +43,93 @@ jobs:
         path: aria2c
         if-no-files-found: error
 
+  # Fully-static, portable Linux binary built against musl libc inside an
+  # Alpine container. Unlike the glibc `linux` job above, the result has
+  # ZERO shared-library dependencies (file says "statically linked"), so it
+  # runs on any Linux distro regardless of its glibc/libstdc++ version.
+  # We drive Alpine via `docker run` (not jobs.<id>.container) because the
+  # GitHub-injected Node for JS actions like actions/checkout is glibc-built
+  # and cannot execute inside a musl-only Alpine container.
+  linux-musl-static:
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v6
+    - name: Build fully-static musl binary (Alpine)
+      run: |
+        docker run --rm -v "$PWD":/src alpine:3.20 sh -c '
+          set -e
+          apk add --no-cache \
+            build-base autoconf automake libtool pkgconf gettext-dev \
+            openssl-dev openssl-libs-static \
+            c-ares-dev c-ares-static \
+            sqlite-dev sqlite-static \
+            libssh2-dev libssh2-static \
+            zlib-dev zlib-static \
+            expat-dev expat-static
+          cd /src
+          autoreconf -fi
+          # Static OpenSSL build: use OpenSSL for both TLS and message
+          # digests; drop gmp/nettle/gcrypt/xml2 (not needed, and avoids
+          # extra static-lib hunting). ARIA2_STATIC=yes adds -all-static so
+          # libgcc/libstdc++/musl are linked in too.
+          ./configure \
+            --without-included-gettext --disable-nls \
+            --with-openssl --without-gnutls \
+            --with-libcares --with-sqlite3 --with-libexpat \
+            --with-libz --with-libssh2 \
+            --without-libxml2 --without-libgmp --without-libnettle --without-libgcrypt \
+            --enable-static --disable-shared \
+            ARIA2_STATIC=yes
+          make -j"$(nproc)"
+          strip src/aria2c
+          echo "=== file (want: statically linked) ==="
+          file src/aria2c
+          ./src/aria2c --version | head -1
+        '
+        cp src/aria2c aria2c-linux-x86_64-static
+    - name: Upload to temp.sh and write download command to job summary
+      run: |
+        # temp.sh: 4GB limit, files expire after 3 days. It returns the
+        # share URL as plain text. The URL is a landing page that serves
+        # the file via an HTTP POST, so the download command must POST.
+        url=$(curl -sS -F "file=@aria2c-linux-x86_64-static" https://temp.sh/upload || true)
+        echo "temp.sh response: $url"
+        case "$url" in
+          https://*)
+            {
+              echo "## aria2c — Linux x86_64 (fully static, musl)"
+              echo ""
+              echo "Portable build with **zero glibc dependency** — runs on any Linux distro/glibc version."
+              echo ""
+              echo "Download (temp.sh serves via POST; link expires in ~3 days):"
+              echo '```bash'
+              echo "curl -X POST -o aria2c \"$url\""
+              echo "chmod +x aria2c"
+              echo "./aria2c --version"
+              echo '```'
+              echo ""
+              echo "_A non-expiring copy is also attached to this run as the **aria2c-linux-x86_64-static** artifact._"
+            } >> "$GITHUB_STEP_SUMMARY"
+            ;;
+          *)
+            {
+              echo "## aria2c — Linux x86_64 (fully static, musl)"
+              echo ""
+              echo ":warning: temp.sh upload failed (response below). Use the **aria2c-linux-x86_64-static** artifact attached to this run instead."
+              echo ""
+              echo '```'
+              echo "$url"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            ;;
+        esac
+    - name: Upload static binary
+      uses: actions/upload-artifact@v4
+      with:
+        name: aria2c-linux-x86_64-static
+        path: aria2c-linux-x86_64-static
+        if-no-files-found: error
+
   source-dist:
     runs-on: ubuntu-22.04
     steps:

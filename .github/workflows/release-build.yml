@@ -1,9 +1,12 @@
 name: release-build
 
-# Manually-triggered build that produces downloadable artifacts:
+# Manually-triggered build that produces downloadable binaries:
 #   * a stripped native Linux x86_64 aria2c binary
-#   * a fully-static musl Linux binary (uploaded to temp.sh)
+#   * a fully-static musl Linux binary (zero glibc dependency)
 #   * single-file static Windows aria2c.exe (mingw cross + MSYS2)
+# Every run keeps the per-job artifacts AND (re)publishes all four binaries
+# to a fixed GitHub Release tag ("latest-build") that acts as a rolling
+# download slot — the tag is moved to the built commit each run.
 # Run it from the Actions tab ("Run workflow") or with:
 #   gh workflow run release-build.yml --ref <branch> --repo <owner>/aria2
 
@@ -88,42 +91,6 @@ jobs:
           ./src/aria2c --version | head -1
         '
         cp src/aria2c aria2c-linux-x86_64-static
-    - name: Upload to temp.sh and write download command to job summary
-      run: |
-        # temp.sh: 4GB limit, files expire after 3 days. It returns the
-        # share URL as plain text. The URL is a landing page that serves
-        # the file via an HTTP POST, so the download command must POST.
-        url=$(curl -sS -F "file=@aria2c-linux-x86_64-static" https://temp.sh/upload || true)
-        echo "temp.sh response: $url"
-        case "$url" in
-          https://*)
-            {
-              echo "## aria2c — Linux x86_64 (fully static, musl)"
-              echo ""
-              echo "Portable build with **zero glibc dependency** — runs on any Linux distro/glibc version."
-              echo ""
-              echo "Download (temp.sh serves via POST; link expires in ~3 days):"
-              echo '```bash'
-              echo "curl -X POST -o aria2c \"$url\""
-              echo "chmod +x aria2c"
-              echo "./aria2c --version"
-              echo '```'
-              echo ""
-              echo "_A non-expiring copy is also attached to this run as the **aria2c-linux-x86_64-static** artifact._"
-            } >> "$GITHUB_STEP_SUMMARY"
-            ;;
-          *)
-            {
-              echo "## aria2c — Linux x86_64 (fully static, musl)"
-              echo ""
-              echo ":warning: temp.sh upload failed (response below). Use the **aria2c-linux-x86_64-static** artifact attached to this run instead."
-              echo ""
-              echo '```'
-              echo "$url"
-              echo '```'
-            } >> "$GITHUB_STEP_SUMMARY"
-            ;;
-        esac
     - name: Upload static binary
       uses: actions/upload-artifact@v4
       with:
@@ -286,3 +253,40 @@ jobs:
         name: aria2c-windows-x86_64-msys2
         path: src/aria2c.exe
         if-no-files-found: error
+
+  # Gather all four binaries and (re)publish them to a single fixed-tag
+  # GitHub Release that acts as a rolling download slot. The tag is deleted
+  # and recreated on the built commit each run, so the release always holds
+  # the freshest binaries at a stable, predictable download URL.
+  release:
+    needs: [linux, linux-musl-static, windows-mingw, windows-msys2]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@v6
+    - name: Download all build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: dist
+    - name: Collect and name binaries
+      run: |
+        mkdir -p release
+        cp dist/aria2c-linux-x86_64/aria2c                       release/aria2c-linux-x86_64
+        cp dist/aria2c-linux-x86_64-static/aria2c-linux-x86_64-static release/aria2c-linux-x86_64-static
+        cp dist/aria2c-windows-x86_64-mingw/aria2c.exe           release/aria2c-windows-x86_64-mingw.exe
+        cp dist/aria2c-windows-x86_64-msys2/aria2c.exe           release/aria2c-windows-x86_64-msys2.exe
+        ls -l release
+    - name: Publish binaries to fixed release tag
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: latest-build
+        target_commitish: ${{ github.sha }}
+        name: Latest build
+        body: Automated build from commit ${{ github.sha }} (run ${{ github.run_id }}).
+        # Replace same-named assets so the slot always carries the freshest binaries.
+        files: |
+          release/aria2c-linux-x86_64
+          release/aria2c-linux-x86_64-static
+          release/aria2c-windows-x86_64-mingw.exe
+          release/aria2c-windows-x86_64-msys2.exe
